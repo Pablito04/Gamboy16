@@ -1,0 +1,160 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local Players = game:GetService("Players")
+
+local Tools = require(ReplicatedStorage.Configuration.Modules:WaitForChild("Tools"))
+local ReturnStolenThingEvent = ServerStorage.Bindables.Events:WaitForChild("ReturnStolenThing")
+local ToolEvent = ReplicatedStorage.Remotes.Events:WaitForChild("Tool")
+
+local ToolData = {}
+
+-- 📌 Función para empujar/fling
+local function Fling(TargetPlayer, AttackerPlayer, Power)
+	local TargetCharacter = TargetPlayer.Character
+	local AttackerCharacter = AttackerPlayer.Character
+	if not TargetCharacter or not AttackerCharacter then return end
+
+	local TargetHRP = TargetCharacter:FindFirstChild("HumanoidRootPart")
+	local AttackerHRP = AttackerCharacter:FindFirstChild("HumanoidRootPart")
+	local TargetHumanoid = TargetCharacter:FindFirstChild("Humanoid")
+	if not TargetHRP or not AttackerHRP or not TargetHumanoid then return end
+
+	TargetHumanoid.Sit = true
+
+	local Direction = (TargetHRP.Position - AttackerHRP.Position).Unit
+	local BodyVelocity = Instance.new("BodyVelocity")
+	BodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+	BodyVelocity.Velocity = (Direction + Vector3.new(0, 1, 0)).Unit * Power
+	BodyVelocity.P = 1e4
+	BodyVelocity.Parent = TargetHRP
+	game:GetService("Debris"):AddItem(BodyVelocity, 0.5)
+
+	task.delay(0.5, function()
+		if TargetHumanoid then
+			TargetHumanoid.Sit = false
+		end
+	end)
+end
+
+-- 📌 Ataque con Raycast (se llama al usar la herramienta)
+local function Attack(Player, Power, ReturnThings)
+	local Character = Player.Character
+	if not Character then return end
+
+	local HRP = Character:FindFirstChild("HumanoidRootPart")
+	if not HRP then return end
+
+	local RayParams = RaycastParams.new()
+	RayParams.FilterDescendantsInstances = {Character}
+	RayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+	local Result = workspace:Raycast(HRP.Position, HRP.CFrame.LookVector * 6, RayParams)
+	if Result and Result.Instance then
+		local TargetPlayer = Players:GetPlayerFromCharacter(Result.Instance.Parent)
+		if TargetPlayer and TargetPlayer ~= Player then
+			Fling(TargetPlayer, Player, Power)
+			if ReturnThings then
+				ReturnStolenThingEvent:Fire(TargetPlayer)
+			end
+		end
+	end
+end
+
+-- 📌 Dar herramienta al jugador
+local function GiveTool(Player, Name, Configuration)
+	local Backpack = Player:FindFirstChild("Backpack")
+	local Character = Player.Character
+	if not Character or not Character:IsDescendantOf(workspace) then return end
+
+	local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+	if not Humanoid then return end
+
+	if not Backpack or not Character then return end
+	if Backpack:FindFirstChild(Name) or Character:FindFirstChild(Name) then return end
+
+	local ToolTemplate = ServerStorage.Tools:FindFirstChild(Name)
+	if not ToolTemplate then return end
+
+	local Tool = ToolTemplate:Clone()
+	Tool.Name = Name
+	Tool.CanBeDropped = false
+	Tool.ToolTip = Configuration.Description or ""
+	Tool.TextureId = Configuration.Icon or ""
+
+	Tool.Parent = Backpack
+	ToolData[Player][Name].Owned = true
+
+	local Equipped = false
+	local Cooldown = false
+
+	Tool.Equipped:Connect(function()
+		Equipped = true
+	end)
+
+	Tool.Unequipped:Connect(function()
+		Equipped = false
+	end)
+
+	Tool.Activated:Connect(function()
+		if not Equipped or Cooldown then return end
+		Cooldown = true
+
+		Attack(Player, Configuration.Power or 50, Configuration.ReturnStolenThings)
+
+		task.delay(Configuration.Cooldown or 1, function()
+			Cooldown = false
+		end)
+	end)
+end
+
+-- 📌 Dar todas las herramientas compradas al respawnear
+local function GiveAllTools(Player)
+	if not ToolData[Player] then return end
+	for Name, Data in pairs(ToolData[Player]) do
+		if Data.Owned then
+			local Configuration = Tools[Name]
+			if Configuration then
+				GiveTool(Player, Name, Configuration)
+			end
+		end
+	end
+end
+
+-- 📌 Eventos jugador
+Players.PlayerAdded:Connect(function(Player)
+	ToolData[Player] = {}
+	for Name, Configuration in pairs(Tools) do
+		ToolData[Player][Name] = {Owned = Configuration.Starter or false}
+	end
+
+	Player.CharacterAdded:Connect(function()
+		GiveAllTools(Player)
+	end)
+
+	if Player.Character then
+		GiveAllTools(Player)
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(Player)
+	ToolData[Player] = nil
+end)
+
+ToolEvent.OnServerEvent:Connect(function(Player, Name)
+	local Configuration = Tools[Name]
+	if not Configuration or Configuration.Starter then return end
+
+	local Leaderstats = Player:FindFirstChild("leaderstats")
+	if not Leaderstats then return end
+
+	local Money = Leaderstats:FindFirstChild("Money")
+	local Rebirths = Leaderstats:FindFirstChild("Rebirths")
+	if not Money or not Rebirths then return end
+
+	if Money.Value < (Configuration.Price or 0) then return end
+	if Rebirths.Value < (Configuration.Rebirth or 0) then return end
+
+	Money.Value -= Configuration.Price
+	ToolData[Player][Name].Owned = true
+	GiveTool(Player, Name, Configuration)
+end)
