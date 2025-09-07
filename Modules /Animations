@@ -1,64 +1,167 @@
-local Numbers = {}
+local CollectionService = game:GetService("CollectionService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
 
-local Suffixes = {
-	"", "K", "M", "B", "T", "Qa", "Qi"
-}
+local Player = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
-function Numbers.Format(Number)
-	if Number < 1000 then
-		return tostring(Number)
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+local Blur = Lighting:WaitForChild("Blur")
+
+local function TweenFrame(Frame, Visible)
+	local FinalPosition = Visible and UDim2.new(0.5, 0, 0.5, 0) or UDim2.new(0.5, 0, 1.5, 0)
+
+	if Visible then
+		Frame.Position = UDim2.new(0.5, 0, 1.5, 0)
+		task.wait()
+		Frame.Visible = true
 	end
 
-	local Tier = math.floor(math.log10(Number) / 3)
-	if Tier > #Suffixes - 1 then
-		Tier = #Suffixes - 1
-	end
+	local Tween = TweenService:Create(
+		Frame,
+		TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+		{Position = FinalPosition}
+	)
 
-	local ScaledNumber = Number / (1000 ^ Tier)
-	local Formatted = string.format("%.3f", ScaledNumber)
-		:gsub("%.0+$", "")
-		:gsub("(%.%d-)0+$", "%1")
-	
-	return Formatted .. Suffixes[Tier + 1]
+	Tween:Play()
+
+	if not Visible then
+		Tween.Completed:Once(function()
+			Frame.Visible = false
+			Frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+		end)
+	end
 end
 
-function Numbers.Time(Seconds)
-	local Years = math.floor(Seconds / 31536000)
-	local Days = math.floor((Seconds % 31536000) / 86400)
-	local Hours = math.floor((Seconds % 86400) / 3600)
-	local Minutes = math.floor((Seconds % 3600) / 60)
-	local Secs = math.floor(Seconds % 60)
+local function TweenCamera(Visible)
+	local TargetFieldOfView = Visible and 60 or 70
 
-	local Parts = {}
+	local Tween = TweenService:Create(
+		Camera,
+		TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+		{FieldOfView = TargetFieldOfView}
+	)
 
-	if Years > 0 then
-		table.insert(Parts, tostring(Years))
+	Tween:Play()
+end
+
+local function TweenBlur(Visible)
+	local TargetSize = Visible and 10 or 0
+
+	if Visible then
+		Blur.Size = 0
+		Blur.Enabled = true
 	end
-	if Days > 0 or Years > 0 then
-		table.insert(Parts, tostring(Days))
-	end
 
-	if Years > 0 or Days > 0 then
-		table.insert(Parts, string.format("%02d", Hours))
-		table.insert(Parts, string.format("%02d", Minutes))
-		table.insert(Parts, string.format("%02d", Secs))
-		return table.concat(Parts, ":")
-	else
-		if Hours > 0 then
-			return string.format("%d:%02d:%02d", Hours, Minutes, Secs)
-		else
-			if Minutes == 0 then
-				if Secs == 0 then
-					return "0"
-				else
-					return tostring(Secs)
+	local Tween = TweenService:Create(
+		Blur,
+		TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+		{Size = TargetSize}
+	)
+
+	Tween:Play()
+
+	if not Visible then
+		Tween.Completed:Once(function()
+			local FramesToCheck = {
+				PlayerGui.IndexGui.IndexFrame,
+				PlayerGui.RebirthGui.RebirthFrame,
+				PlayerGui.ShopGui.ShopFrame,
+			}
+
+			local AnyStillOpen = false
+			for _, FrameToCheck in ipairs(FramesToCheck) do
+				if FrameToCheck.Visible then
+					AnyStillOpen = true
+					break
 				end
-			else
-				return string.format("%d:%02d", Minutes, Secs)
 			end
+
+			if not AnyStillOpen then
+				Blur.Enabled = false
+			end
+		end)
+	end
+end
+
+local function TweenButton(UIScale, Scale)
+	local Tween = TweenService:Create(
+		UIScale,
+		TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+		{Scale = Scale}
+	)
+
+	Tween:Play()
+end
+
+local Animations = {}
+
+function Animations:AnimateFrame(Frame, Visible)
+	if not Frame or not Frame:IsA("Frame") then return end
+	
+	local Open = SoundService.Sounds:WaitForChild("Open")
+	local Close = SoundService.Sounds:WaitForChild("Close")
+	
+	if Visible then
+		Open:Play()
+	else
+		Close:Play()
+	end
+	
+	local FramesToCheck = {
+		PlayerGui.IndexGui.IndexFrame,
+		PlayerGui.RebirthGui.RebirthFrame,
+		PlayerGui.ShopGui.ShopFrame,
+		PlayerGui.RobuxShopGui.RobuxShopFrame
+	}
+
+	for _, Descendant in ipairs(FramesToCheck) do
+		if Descendant ~= Frame and Descendant.Visible then
+			TweenFrame(Descendant, false)
+			TweenCamera(false)
+			TweenBlur(false)
 		end
 	end
+
+	if Frame.Visible and not Visible then
+		TweenFrame(Frame, false)
+		TweenCamera(false)
+		TweenBlur(false)
+	elseif not Frame.Visible and Visible then
+		TweenFrame(Frame, true)
+		TweenCamera(true)
+		TweenBlur(true)
+	end
 end
 
+function Animations:AnimateButton(Button)
+	if not Button then return end
 
-return Numbers
+	local Select = SoundService.Sounds:WaitForChild("Select")
+
+	Button.MouseEnter:Connect(function()
+		TweenButton(Button.UIScale, 1.1)
+		Select:Play()
+	end)
+
+	Button.MouseLeave:Connect(function()
+		TweenButton(Button.UIScale, 1)
+	end)
+
+	Button.MouseButton1Down:Connect(function()
+		TweenButton(Button.UIScale, 0.9)
+	end)
+
+	Button.MouseButton1Up:Connect(function()
+		TweenButton(Button.UIScale, 1)
+	end)
+
+	Button.Activated:Connect(function()
+		TweenButton(Button.UIScale, 1)
+	end)
+end
+
+return Animations
